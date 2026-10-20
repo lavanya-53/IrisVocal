@@ -1,7 +1,7 @@
 
 import { useEffect, useRef, useState } from "react";
+import GazeTracker from "./GazeTracker";
 import "./App.css";
-import Auth from "./Auth";
 
 const initialPhrases = [
   { id: 1, text: "I need help", category: "General", icon: "✚" },
@@ -21,7 +21,8 @@ const initialPhrases = [
 const categories = ["All", "General", "Health", "Social", "Safety"];
 
 function App() {
-  return <Auth />;
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+
   const [phrases, setPhrases] = useState(() => {
     try {
       const savedPhrases = localStorage.getItem("irisvocal-phrases");
@@ -48,12 +49,17 @@ function App() {
     }
   }, [phrases]);
   const [activeCategory, setActiveCategory] = useState("All");
+  const [currentPage, setCurrentPage] = useState(0);
+  const [caregiverMode, setCaregiverMode] = useState(false);
+  const TILES_PER_PAGE = 4;
   const [selectedPhrase, setSelectedPhrase] = useState(null);
 
   const [newPhrase, setNewPhrase] = useState("");
   const [newCategory, setNewCategory] = useState("General");
 
   const [editingId, setEditingId] = useState(null);
+  const [showAddForm, setShowAddForm] = useState(false);
+const [showEditForm, setShowEditForm] = useState(false);
   const [editText, setEditText] = useState("");
   const [editCategory, setEditCategory] = useState("General");
 
@@ -74,6 +80,17 @@ function App() {
     activeCategory === "All"
       ? phrases
       : phrases.filter((phrase) => phrase.category === activeCategory);
+
+  const totalPages = Math.max(1, Math.ceil(visiblePhrases.length / TILES_PER_PAGE));
+  const safePage = Math.min(currentPage, totalPages - 1);
+  const pagePhrases = visiblePhrases.slice(
+    safePage * TILES_PER_PAGE,
+    safePage * TILES_PER_PAGE + TILES_PER_PAGE
+  );
+
+  useEffect(() => {
+    if (currentPage !== safePage) setCurrentPage(safePage);
+  }, [currentPage, safePage]);
 
   function speakPhrase(text) {
     if (!("speechSynthesis" in window)) {
@@ -160,6 +177,8 @@ function App() {
     setPhrases((current) => [...current, phrase]);
     setNewPhrase("");
     setActiveCategory("All");
+    setCurrentPage(0);
+    setShowAddForm(false);
   }
 
   function startEditing(phrase) {
@@ -190,7 +209,6 @@ function App() {
     );
 
     setEditingId(null);
-    setEditText("");
   }
 
   function deletePhrase(id) {
@@ -340,6 +358,13 @@ function App() {
     submitEmergencyAlert();
   }
 
+  if (!isLoggedIn) {
+  return (
+    <button onClick={() => setIsLoggedIn(true)}>
+      Open communication board (development)
+    </button>
+  );
+}
   return (
     <main className="console">
       <header className="topbar">
@@ -419,35 +444,6 @@ function App() {
       </section>
 
       <div className="workspace">
-        <aside className="category-rail" aria-label="Phrase categories">
-          <p className="rail-heading">CATEGORIES</p>
-
-          {categories.map((category) => (
-            <button
-              key={category}
-              type="button"
-              className={`rail-button ${
-                activeCategory === category ? "active" : ""
-              }`}
-              onClick={() => setActiveCategory(category)}
-              aria-pressed={activeCategory === category}
-            >
-              <span className="rail-symbol" aria-hidden="true">
-                {category === "All" ? "▦" :
-                  category === "General" ? "○" :
-                  category === "Health" ? "+" :
-                  category === "Social" ? "◇" : "!"}
-              </span>
-              <span>{category}</span>
-            </button>
-          ))}
-
-          <div className="rail-note">
-            <span className="rail-note-dot" />
-            <span>Phrase board</span>
-          </div>
-        </aside>
-
         <section className="board-section">
           <div className="board-heading">
             <div>
@@ -456,15 +452,54 @@ function App() {
               <p className="board-subtitle">
                 Choose a message. It will be spoken aloud.
               </p>
+              <div className="board-actions">
+                <button
+                  type="button"
+                  className="caregiver-toggle"
+                  onClick={() => {
+                    setCaregiverMode((current) => !current);
+                    setEditingId(null);
+                    setShowAddForm(false);
+                  }}
+                  aria-pressed={caregiverMode}
+                >
+                  {caregiverMode ? "Exit caregiver mode" : "Caregiver settings"}
+                </button>
+                {caregiverMode && (
+                  <button
+                    type="button"
+                    className="add-message-toggle"
+                    onClick={() => {
+                      setEditingId(null);
+                      setShowAddForm((current) => !current);
+                    }}
+                    aria-expanded={showAddForm}
+                  >
+                    {showAddForm ? "Close form" : "+ Add message"}
+                  </button>
+                )}
+              </div>
             </div>
 
-            <span className="tile-count">
-              {visiblePhrases.length} MESSAGES
-            </span>
+            <div className="board-controls">
+              <label className="category-filter-label" htmlFor="category-filter">Category</label>
+              <select
+                id="category-filter"
+                className="category-filter"
+                value={activeCategory}
+                onChange={(event) => { setActiveCategory(event.target.value); setCurrentPage(0); }}
+                aria-label="Filter phrases by category"
+              >
+                {categories.map((category) => (
+                  <option key={category} value={category}>{category}</option>
+                ))}
+              </select>
+              <span className="tile-count">{visiblePhrases.length} MESSAGES</span>
+            </div>
           </div>
 
           <div className="phrase-grid">
-            {visiblePhrases.map((phrase, index) => (
+            {pagePhrases.map((phrase, index) => (
               <article
                 key={phrase.id}
                 className={`phrase-card ${
@@ -474,11 +509,13 @@ function App() {
                 <button
                   type="button"
                   className="phrase-select"
+                  data-gaze-phrase-id={phrase.id}
+                  data-gaze-phrase-text={phrase.text}
                   onClick={() => handlePhraseSelect(phrase)}
                   aria-pressed={selectedPhrase?.id === phrase.id}
                 >
                   <span className="tile-number">
-                    {String(index + 1).padStart(2, "0")}
+                    {String(safePage * TILES_PER_PAGE + index + 1).padStart(2, "0")}
                   </span>
 
                   <span className="tile-icon" aria-hidden="true">
@@ -490,27 +527,55 @@ function App() {
                   <span className="tile-category">{phrase.category}</span>
                 </button>
 
-                <div className="phrase-tools">
-                  <button
-                    type="button"
-                    onClick={() => startEditing(phrase)}
-                    aria-label={`Edit ${phrase.text}`}
-                    title="Edit phrase"
-                  >
-                    Edit
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => deletePhrase(phrase.id)}
-                    aria-label={`Delete ${phrase.text}`}
-                    title="Delete phrase"
-                  >
-                    Delete
-                  </button>
-                </div>
+                {caregiverMode && (
+                  <div className="phrase-tools">
+                    <button
+                      type="button"
+                      onClick={() => startEditing(phrase)}
+                      aria-label={`Edit ${phrase.text}`}
+                      title="Edit phrase"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => deletePhrase(phrase.id)}
+                      aria-label={`Delete ${phrase.text}`}
+                      title="Delete phrase"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                )}
               </article>
             ))}
           </div>
+
+          {visiblePhrases.length > 0 && (
+            <nav className="phrase-pagination" aria-label="Communication board pages">
+              <button
+                type="button"
+                className="page-button"
+                onClick={() => setCurrentPage((page) => Math.max(0, page - 1))}
+                disabled={safePage === 0}
+                aria-label="Previous four messages"
+              >
+                ← Previous
+              </button>
+              <span className="page-status" aria-live="polite">
+                Page {safePage + 1} of {totalPages}
+              </span>
+              <button
+                type="button"
+                className="page-button"
+                onClick={() => setCurrentPage((page) => Math.min(totalPages - 1, page + 1))}
+                disabled={safePage >= totalPages - 1}
+                aria-label="Next four messages"
+              >
+                Next →
+              </button>
+            </nav>
+          )}
 
           {visiblePhrases.length === 0 && (
             <div className="empty-state">
@@ -524,27 +589,8 @@ function App() {
           </div>
         </section>
 
-        <aside className="utility-rail">
-          <section className="preview-panel">
-            <div className="panel-heading">
-              <div>
-                <p className="section-kicker">CAMERA MODULE</p>
-                <h2>Eye tracking</h2>
-              </div>
-              <span className="preview-indicator" />
-            </div>
-
-            <div className="camera-placeholder">
-              <span className="camera-symbol" aria-hidden="true">◎</span>
-              <p>Camera preview</p>
-              <span>Awaiting tracking integration</span>
-            </div>
-
-            <p className="preview-caption">
-              Live gaze and dwell feedback will appear here when connected.
-            </p>
-          </section>
-
+        {caregiverMode && (
+          <aside className="utility-rail">
           <section className="utility-panel">
             <div className="panel-heading">
               <div>
@@ -590,7 +636,7 @@ function App() {
                   Cancel
                 </button>
               </form>
-            ) : (
+            ) : showAddForm ? (
               <>
                 <p className="utility-description">
                   Create a message that suits your everyday needs.
@@ -623,17 +669,15 @@ function App() {
                   </button>
                 </form>
               </>
+            ) : (
+              <p className="utility-description">
+                Use “Add message” above to create a custom phrase.
+              </p>
             )}
           </section>
-
-          <section className="accessibility-note">
-            <span className="note-symbol" aria-hidden="true">i</span>
-            <p>
-              Designed for accessible communication. Use a keyboard or
-              compatible pointing device until gaze control is connected.
-            </p>
-          </section>
-        </aside>
+          <GazeTracker />
+          </aside>
+        )}
       </div>
 
       <footer className="console-footer">
