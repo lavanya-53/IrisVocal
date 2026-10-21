@@ -33,7 +33,10 @@ public class EmergencyService {
         User user = userService.findUserByEmail(email);
 
         // Read the recipient address supplied by the frontend.
+ 
        String recipientEmail=user.getEmergencyContactEmail();
+        String recipientEmail = request.getRecipientEmail();
+
 
         double latitude = request.getLatitude();
         double longitude = request.getLongitude();
@@ -46,10 +49,10 @@ public class EmergencyService {
         // Prepare the email body.
         String emailBody =
                 "IRISVOCAL EMERGENCY ALERT\n\n"
-                        + "User: " + user.getName() + "\n"
-                        + "Message: " + request.getMessage() + "\n"
-                        + "Current location: " + locationUrl + "\n\n"
-                        + "Please contact the user as soon as possible.";
+                + "User: " + user.getName() + "\n"
+                + "Message: " + request.getMessage() + "\n"
+                + "Current location: " + locationUrl + "\n\n"
+                + "Please contact the user as soon as possible.";
 
         try {
             // Send the email to the frontend-supplied recipient.
