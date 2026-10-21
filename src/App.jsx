@@ -75,6 +75,10 @@ const [showEditForm, setShowEditForm] = useState(false);
     message: "",
     locationUrl: null,
   });
+  const [sosConfirmationOpen, setSosConfirmationOpen] = useState(false);
+  const sosConfirmationOpenRef = useRef(false);
+  const sosPromptTimeoutRef = useRef(null);
+  const [trackingStatus, setTrackingStatus] = useState("idle");
 
   const visiblePhrases =
     activeCategory === "All"
@@ -352,11 +356,60 @@ const [showEditForm, setShowEditForm] = useState(false);
     }
   }
 
-  // Both the manual SOS button and the future Member 1 callback should call
-  // this same handler. Do not connect real SMS until Member 3 confirms readiness.
-  function handleEmergencyClick() {
+  function openSosConfirmation() {
+    if (sosPromptTimeoutRef.current) clearTimeout(sosPromptTimeoutRef.current);
+    sosConfirmationOpenRef.current = true;
+    setSosConfirmationOpen(true);
+    // The second intentional long blink must happen soon after the prompt opens.
+    sosPromptTimeoutRef.current = setTimeout(() => {
+      sosConfirmationOpenRef.current = false;
+      setSosConfirmationOpen(false);
+      sosPromptTimeoutRef.current = null;
+    }, 8000);
+  }
+
+  function cancelSosConfirmation() {
+    if (sosPromptTimeoutRef.current) clearTimeout(sosPromptTimeoutRef.current);
+    sosPromptTimeoutRef.current = null;
+    sosConfirmationOpenRef.current = false;
+    setSosConfirmationOpen(false);
+  }
+
+  function confirmSosConfirmation() {
+    if (sosPromptTimeoutRef.current) clearTimeout(sosPromptTimeoutRef.current);
+    sosPromptTimeoutRef.current = null;
+    sosConfirmationOpenRef.current = false;
+    setSosConfirmationOpen(false);
+    // Still uses the existing mock handler. Real delivery belongs to the backend integration.
     submitEmergencyAlert();
   }
+
+  // Manual SOS opens the same confirmation prompt; it does not immediately submit an alert.
+  function handleEmergencyClick() {
+    openSosConfirmation();
+  }
+
+  useEffect(() => {
+    function handleIntentionalBlink() {
+      if (sosConfirmationOpenRef.current) {
+        confirmSosConfirmation();
+      } else {
+        openSosConfirmation();
+      }
+    }
+
+    function handleTrackingStatus(event) {
+      setTrackingStatus(event.detail?.status || "idle");
+    }
+
+    window.addEventListener("irisvocal:sos-blink", handleIntentionalBlink);
+    window.addEventListener("irisvocal:tracking-status", handleTrackingStatus);
+    return () => {
+      window.removeEventListener("irisvocal:sos-blink", handleIntentionalBlink);
+      window.removeEventListener("irisvocal:tracking-status", handleTrackingStatus);
+      if (sosPromptTimeoutRef.current) clearTimeout(sosPromptTimeoutRef.current);
+    };
+  }, []);
 
   if (!isLoggedIn) {
   return (
@@ -382,9 +435,18 @@ const [showEditForm, setShowEditForm] = useState(false);
 
         <div className="topbar-spacer" />
 
-        <span className="tracking-status">
-          <span className="status-light" />
-          Tracking not connected
+        <span className="tracking-status" aria-live="polite">
+          <span
+            className="status-light"
+            style={{
+              background: trackingStatus === "running"
+                ? "#159a87"
+                : trackingStatus === "error" ? "#c93643" : undefined,
+            }}
+          />
+          {trackingStatus === "running"
+            ? "Blink SOS camera active"
+            : trackingStatus === "error" ? "Camera needs attention" : "Tracking not connected"}
         </span>
 
         <button
@@ -589,8 +651,12 @@ const [showEditForm, setShowEditForm] = useState(false);
           </div>
         </section>
 
-        {caregiverMode && (
-          <aside className="utility-rail">
+        <aside
+          className={`utility-rail ${caregiverMode ? "" : "utility-rail--background"}`}
+          aria-hidden={!caregiverMode}
+          inert={!caregiverMode}
+        >
+          {caregiverMode && (
           <section className="utility-panel">
             <div className="panel-heading">
               <div>
@@ -675,10 +741,42 @@ const [showEditForm, setShowEditForm] = useState(false);
               </p>
             )}
           </section>
+          )}
           <GazeTracker />
-          </aside>
-        )}
+        </aside>
       </div>
+
+      {sosConfirmationOpen && (
+        <div className="sos-confirmation-backdrop">
+          <section
+            className="sos-confirmation-dialog"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="sos-confirmation-title"
+            aria-describedby="sos-confirmation-description"
+          >
+            <div className="sos-confirmation-emblem" aria-hidden="true">SOS</div>
+            <h2 id="sos-confirmation-title">Confirm emergency alert?</h2>
+            <p id="sos-confirmation-description">
+              A deliberate long blink opens this prompt. To confirm hands-free, hold both eyes closed for a deliberate long blink and reopen them within 8 seconds.
+            </p>
+            <p className="sos-confirmation-note">
+              Quick blinks are ignored. If this prompt appeared by mistake, cancel it. You can also use Confirm SOS below.
+            </p>
+            <div className="sos-confirmation-actions">
+              <button type="button" className="sos-cancel-button" onClick={cancelSosConfirmation}>
+                Cancel
+              </button>
+              <button type="button" className="sos-confirm-button" onClick={confirmSosConfirmation}>
+                Confirm SOS
+              </button>
+            </div>
+            <p className="sos-confirmation-footnote">
+              Development mode: confirmation uses the existing mock emergency handler; no SMS is sent.
+            </p>
+          </section>
+        </div>
+      )}
 
       <footer className="console-footer">
         <span>IRISVOCAL</span>

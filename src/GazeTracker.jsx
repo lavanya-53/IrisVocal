@@ -11,13 +11,15 @@ const EYES = [
   { corners: [362, 263], iris: [473, 474, 475, 476, 477], top: 386, bottom: 374 },
 ];
 
-// Target coordinates are normalized to the browser viewport.
-const CALIBRATION_TARGETS = [
-  { x: 0.12, y: 0.14, label: "Top left" },
-  { x: 0.88, y: 0.14, label: "Top right" },
-  { x: 0.5, y: 0.5, label: "Center" },
-  { x: 0.12, y: 0.86, label: "Bottom left" },
-  { x: 0.88, y: 0.86, label: "Bottom right" },
+// The board displays four selectable phrase buttons in a 2×2 grid.
+// Capture four points inside EACH button so calibration reflects the actual
+// selectable regions and avoids the gaps and caregiver Edit/Delete controls.
+const CALIBRATION_TARGET_COUNT = 16;
+const POINTS_PER_TILE = [
+  { x: 0.28, y: 0.28, label: "upper left" },
+  { x: 0.72, y: 0.28, label: "upper right" },
+  { x: 0.28, y: 0.72, label: "lower left" },
+  { x: 0.72, y: 0.72, label: "lower right" },
 ];
 const SAMPLES_PER_TARGET = 35;
 
@@ -73,6 +75,71 @@ function getEyeRatios(points, eye) {
   };
 }
 
+// Blink detection uses eyelid geometry only, not iris landmarks, because the
+// iris landmarks can become unreliable while the eyelids are closed.
+function getEyeOpennessRatio(points, eye) {
+  const cornerA = points[eye.corners[0]];
+  const cornerB = points[eye.corners[1]];
+  const upperLid = points[eye.top];
+  const lowerLid = points[eye.bottom];
+  if (!cornerA || !cornerB || !upperLid || !lowerLid) return null;
+
+  const eyeWidth = Math.hypot(cornerB.x - cornerA.x, cornerB.y - cornerA.y);
+  const eyeHeight = Math.hypot(lowerLid.x - upperLid.x, lowerLid.y - upperLid.y);
+  if (eyeWidth < 0.0001) return null;
+  return eyeHeight / eyeWidth;
+}
+
+function detectIntentionalBlink(points, blinkState, now) {
+  const openness = EYES.map((eye) => getEyeOpennessRatio(points, eye));
+  if (openness.some((value) => !Number.isFinite(value))) {
+    // Missing landmarks during a frame should not create a synthetic blink.
+    blinkState.closedAt = null;
+    return null;
+  }
+
+  openness.forEach((value, index) => {
+    const baseline = blinkState.baselines[index];
+    if (baseline == null) {
+      // Learn each user's open-eye shape only from a clearly open eye.
+      if (value > 0.09) blinkState.baselines[index] = value;
+    } else if (blinkState.closedAt == null && value > baseline * 0.62) {
+      // Slowly adapt to natural small changes without learning a closed eye as open.
+      blinkState.baselines[index] = baseline * 0.985 + value * 0.015;
+    }
+  });
+
+  const ready = blinkState.baselines.every((baseline) => Number.isFinite(baseline) && baseline > 0.09);
+  if (!ready) return null;
+
+  const bothEyesClosed = openness.every((value, index) => {
+    const threshold = Math.max(0.035, blinkState.baselines[index] * 0.42);
+    return value < threshold;
+  });
+
+  if (bothEyesClosed) {
+    if (blinkState.closedAt == null) blinkState.closedAt = now;
+    return null;
+  }
+
+  if (blinkState.closedAt == null) return null;
+  const durationMs = now - blinkState.closedAt;
+  blinkState.closedAt = null;
+
+  // Reject ordinary quick blinks and unusually long closures. Requiring a reopen
+  // makes the gesture a completed blink, not simply keeping the eyes closed.
+  if (durationMs < 450 || durationMs > 1800 || now - blinkState.lastAcceptedAt < 1400) {
+    return null;
+  }
+
+  blinkState.lastAcceptedAt = now;
+  return durationMs;
+}
+
+function makeInitialBlinkState() {
+  return { baselines: [null, null], closedAt: null, lastAcceptedAt: -Infinity };
+}
+
 function estimateEyePosition(points) {
   const ratios = EYES.map((eye) => getEyeRatios(points, eye)).filter(Boolean);
   if (!ratios.length) return null;
@@ -110,76 +177,212 @@ function classifyPosition(position) {
     .replace(/^, |, $/g, "");
 }
 
-// Fit x/y screen coordinates from the five calibration samples using least squares.
-// This is a simple diagnostic mapping, not a medically validated gaze model.
-function solve3x3(matrix, vector) {
-  const a = matrix.map((row, index) => [...row, vector[index]]);
-  for (let col = 0; col < 3; col += 1) {
-    let pivot = col;
-    for (let row = col + 1; row < 3; row += 1) {
-      if (Math.abs(a[row][col]) > Math.abs(a[pivot][col])) pivot = row;
+// Solve a small linear system with partial pivoting.
+function solveLinearSystem(matrix, vector) {
+  const size = vector.length;
+  const augmented = matrix.map((row, index) => [...row, vector[index]]);
+
+  for (let column = 0; column < size; column += 1) {
+    let pivot = column;
+    for (let row = column + 1; row < size; row += 1) {
+      if (Math.abs(augmented[row][column]) > Math.abs(augmented[pivot][column])) {
+        pivot = row;
+      }
     }
-    if (Math.abs(a[pivot][col]) < 1e-10) return null;
-    [a[col], a[pivot]] = [a[pivot], a[col]];
-    const divisor = a[col][col];
-    for (let j = col; j < 4; j += 1) a[col][j] /= divisor;
-    for (let row = 0; row < 3; row += 1) {
-      if (row === col) continue;
-      const factor = a[row][col];
-      for (let j = col; j < 4; j += 1) a[row][j] -= factor * a[col][j];
+    if (Math.abs(augmented[pivot][column]) < 1e-9) return null;
+
+    [augmented[column], augmented[pivot]] = [augmented[pivot], augmented[column]];
+    const divisor = augmented[column][column];
+    for (let j = column; j <= size; j += 1) augmented[column][j] /= divisor;
+
+    for (let row = 0; row < size; row += 1) {
+      if (row === column) continue;
+      const factor = augmented[row][column];
+      for (let j = column; j <= size; j += 1) {
+        augmented[row][j] -= factor * augmented[column][j];
+      }
     }
   }
-  return a.map((row) => row[3]);
+
+  return augmented.map((row) => row[size]);
 }
 
-// Fit each screen axis independently. The calibration data shows that iris X
-// separates left/right targets more reliably than iris Y separates top/bottom.
-// Keeping the axes independent prevents noisy vertical readings from shifting X,
-// and prevents horizontal readings from distorting Y.
-function fitLinearAxis(points, inputKey, targetKey) {
-  if (!points || points.length < 2) return null;
-
-  const meanInput = points.reduce((sum, point) => sum + point[inputKey], 0) / points.length;
-  const meanTarget = points.reduce((sum, point) => sum + point[targetKey], 0) / points.length;
-
-  let covariance = 0;
-  let variance = 0;
-  points.forEach((point) => {
-    const inputDelta = point[inputKey] - meanInput;
-    covariance += inputDelta * (point[targetKey] - meanTarget);
-    variance += inputDelta * inputDelta;
-  });
-
-  // If the eye signal barely changes across targets, mapping it to the screen
-  // would amplify noise. In that case, refuse to produce a misleading estimate.
-  if (variance < 0.00005) return null;
-
-  const slope = covariance / variance;
-  const intercept = meanTarget - slope * meanInput;
-  return { slope, intercept };
+// Fit both screen axes from BOTH gaze signals. A normalized 2D quadratic model
+// can compensate for cross-axis coupling and mild curvature seen with webcam gaze.
+function gazeFeatures(x, y) {
+  return [1, x, y, x * x, x * y, y * y];
 }
 
-function fitAxisMapping(points) {
-  if (!points || points.length < 3) return null;
-  const x = fitLinearAxis(points, "irisX", "targetX");
-  const y = fitLinearAxis(points, "verticalSignal", "targetY");
-  return x && y ? { x, y } : null;
+function fitGazeMapping(points) {
+  if (!points || points.length !== CALIBRATION_TARGET_COUNT) return null;
+
+  const meanX = points.reduce((sum, point) => sum + point.irisX, 0) / points.length;
+  const meanY = points.reduce((sum, point) => sum + point.verticalSignal, 0) / points.length;
+  const scaleX = Math.sqrt(
+    points.reduce((sum, point) => sum + (point.irisX - meanX) ** 2, 0) / points.length
+  );
+  const scaleY = Math.sqrt(
+    points.reduce((sum, point) => sum + (point.verticalSignal - meanY) ** 2, 0) / points.length
+  );
+  if (scaleX < 1e-5 || scaleY < 1e-5) return null;
+
+  const rows = points.map((point) => gazeFeatures(
+    (point.irisX - meanX) / scaleX,
+    (point.verticalSignal - meanY) / scaleY,
+  ));
+  const featureCount = rows[0].length;
+  const normal = Array.from({ length: featureCount }, () => Array(featureCount).fill(0));
+  for (const row of rows) {
+    for (let r = 0; r < featureCount; r += 1) {
+      for (let c = 0; c < featureCount; c += 1) normal[r][c] += row[r] * row[c];
+    }
+  }
+
+  // Mild ridge on non-constant terms reduces instability when gaze signals correlate.
+  for (let index = 1; index < featureCount; index += 1) normal[index][index] += 0.01;
+
+  function fitTarget(key) {
+    const right = Array(featureCount).fill(0);
+    points.forEach((point, index) => {
+      for (let j = 0; j < featureCount; j += 1) right[j] += rows[index][j] * point[key];
+    });
+    return solveLinearSystem(normal, right);
+  }
+
+  const coefficientsX = fitTarget("targetX");
+  const coefficientsY = fitTarget("targetY");
+  if (
+    !coefficientsX || !coefficientsY ||
+    [...coefficientsX, ...coefficientsY].some((value) => !Number.isFinite(value))
+  ) return null;
+
+  return { meanX, meanY, scaleX, scaleY, coefficientsX, coefficientsY };
+}
+function predictDocumentPoint(position, mapping) {
+  if (!position || !mapping) return null;
+  const row = gazeFeatures(
+    (position.x - mapping.meanX) / mapping.scaleX,
+    (position.verticalSignal - mapping.meanY) / mapping.scaleY,
+  );
+  return {
+    x: row.reduce((sum, value, index) => sum + value * mapping.coefficientsX[index], 0),
+    y: row.reduce((sum, value, index) => sum + value * mapping.coefficientsY[index], 0),
+  };
 }
 
-function mapGazeToScreen(position, points) {
-  if (!position || points.length < 3) return null;
-  const mapping = fitAxisMapping(points);
-  if (!mapping) return null;
+// The model predicts document coordinates so normal scrolling does not invalidate
+// calibration. Selection is allowed only while the predicted point remains in the
+// phrase-button region captured during calibration.
+function mapGazeToScreen(position, mapping, boardBounds) {
+  const predicted = predictDocumentPoint(position, mapping);
+  if (!predicted || !boardBounds || !window.innerWidth || !window.innerHeight) return null;
 
-  const x = mapping.x.slope * position.x + mapping.x.intercept;
-  const y =
-  mapping.y.slope * position.verticalSignal +
-  mapping.y.intercept +
-  0.03;
+  const insideBoard =
+    predicted.x >= boardBounds.left && predicted.x <= boardBounds.right &&
+    predicted.y >= boardBounds.top && predicted.y <= boardBounds.bottom;
+  // Show the real model prediction rather than pinning the dot to the board edge.
+  // Selection remains blocked whenever the unbounded prediction is outside the board.
+  return {
+    x: (predicted.x - window.scrollX) / window.innerWidth,
+    y: (predicted.y - window.scrollY) / window.innerHeight,
+    insideBoard,
+  };
+}
+
+// Create 16 calibration targets from the four visible phrase buttons.
+// Each target is positioned inside a button's own rectangle, not inside a
+// broad board bounding-box that could put targets into gaps between cards.
+// CSS keeps the board at 2×2; use Category=All so all four tiles are present.
+function createBoardCalibrationTargets() {
+  const buttons = Array.from(
+    document.querySelectorAll(".phrase-grid .phrase-select[data-gaze-phrase-id]")
+  );
+
+  if (buttons.length !== 4) {
+    return {
+      targets: null,
+      bounds: null,
+      error: "For board calibration, set Category to All and make sure exactly four phrase tiles are visible on the current page.",
+    };
+  }
+
+  const entries = buttons.map((button, tileIndex) => ({
+    button,
+    tileIndex,
+    rect: button.getBoundingClientRect(),
+    phraseText: button.getAttribute("data-gaze-phrase-text") || `Tile ${tileIndex + 1}`,
+  }));
+
+  if (entries.some(({ rect }) => rect.width <= 0 || rect.height <= 0)) {
+    return {
+      targets: null,
+      bounds: null,
+      error: "The phrase buttons are not visible. Scroll the communication board into view and try again.",
+    };
+  }
+
+  // Require the full button geometry to be visible, otherwise clipped rectangles
+  // would silently shift the calibration points and corrupt the mapping.
+  const fullyVisible = entries.every(({ rect }) =>
+    rect.left >= 0 && rect.top >= 0 &&
+    rect.right <= window.innerWidth && rect.bottom <= window.innerHeight
+  );
+  if (!fullyVisible) {
+    return {
+      targets: null,
+      bounds: null,
+      error: "All four phrase buttons must fit inside the browser window during calibration. Please resize or zoom out, then retry.",
+    };
+  }
+
+  const targets = [];
+  for (const entry of entries) {
+    for (const point of POINTS_PER_TILE) {
+      const clientX = entry.rect.left + entry.rect.width * point.x;
+      const clientY = entry.rect.top + entry.rect.height * point.y;
+      targets.push({
+        x: clientX / window.innerWidth,
+        y: clientY / window.innerHeight,
+        targetX: clientX + window.scrollX,
+        targetY: clientY + window.scrollY,
+        label: `Tile ${entry.tileIndex + 1} · ${point.label}`,
+        phraseText: entry.phraseText,
+      });
+    }
+  }
+
+  if (targets.length !== CALIBRATION_TARGET_COUNT) {
+    return {
+      targets: null,
+      bounds: null,
+      error: `Expected ${CALIBRATION_TARGET_COUNT} calibration targets but could not create them. Please retry.`,
+    };
+  }
+
+  const visibleBounds = {
+    left: Math.min(...entries.map(({ rect }) => rect.left)),
+    right: Math.max(...entries.map(({ rect }) => rect.right)),
+    top: Math.min(...entries.map(({ rect }) => rect.top)),
+    bottom: Math.max(...entries.map(({ rect }) => rect.bottom)),
+  };
+  const width = visibleBounds.right - visibleBounds.left;
+  const height = visibleBounds.bottom - visibleBounds.top;
+  if (width < 220 || height < 140) {
+    return {
+      targets: null,
+      bounds: null,
+      error: "The visible phrase-board area is too small for calibration. Zoom out or resize the window, then retry.",
+    };
+  }
 
   return {
-    x: Math.max(0.02, Math.min(0.98, x)),
-    y: Math.max(0.04, Math.min(0.96, y)),
+    targets,
+    bounds: {
+      left: visibleBounds.left + window.scrollX,
+      right: visibleBounds.right + window.scrollX,
+      top: visibleBounds.top + window.scrollY,
+      bottom: visibleBounds.bottom + window.scrollY,
+    },
   };
 }
 
@@ -195,11 +398,18 @@ export default function GazeTracker() {
   const calibrationIndexRef = useRef(0);
   const currentTargetSamplesRef = useRef([]);
   const calibrationPointsRef = useRef([]);
+  const calibrationTargetsRef = useRef([]);
+  const calibrationBoundsRef = useRef(null);
+  const gazeMappingRef = useRef(null);
   const gazeMarkerEnabledRef = useRef(false);
   const smoothedMarkerRef = useRef(null);
   const dwellTargetRef = useRef(null);
   const lastDwellUiUpdateRef = useRef(0);
+  const blinkStateRef = useRef(makeInitialBlinkState());
+  const calibrationWorkflowActiveRef = useRef(false);
+  const blinkReadyRef = useRef(false);
 
+  const [blinkStatus, setBlinkStatus] = useState("Start the camera to learn your open-eye baseline.");
   const [status, setStatus] = useState("idle");
   const [statusMessage, setStatusMessage] = useState("Camera not started");
   const [faceDetected, setFaceDetected] = useState(false);
@@ -210,6 +420,7 @@ export default function GazeTracker() {
   const [calibrationState, setCalibrationState] = useState("idle");
   const [calibrationIndex, setCalibrationIndex] = useState(0);
   const [calibrationPoints, setCalibrationPoints] = useState([]);
+  const [calibrationTargets, setCalibrationTargets] = useState([]);
   const [calibrationSampleCount, setCalibrationSampleCount] = useState(0);
   const [gazeMarkerEnabled, setGazeMarkerEnabled] = useState(false);
   const [mappedGaze, setMappedGaze] = useState(null);
@@ -229,10 +440,15 @@ export default function GazeTracker() {
   }, []);
 
   function resetCalibration() {
+    calibrationWorkflowActiveRef.current = false;
     calibrationActiveRef.current = false;
     calibrationIndexRef.current = 0;
     currentTargetSamplesRef.current = [];
     calibrationPointsRef.current = [];
+    calibrationTargetsRef.current = [];
+    calibrationBoundsRef.current = null;
+    gazeMappingRef.current = null;
+    setCalibrationTargets([]);
     setCalibrationState("idle");
     setCalibrationIndex(0);
     setCalibrationPoints([]);
@@ -271,25 +487,64 @@ export default function GazeTracker() {
     setEyeDirection("—");
     setStatus("idle");
     setStatusMessage("Camera stopped");
+    blinkStateRef.current = makeInitialBlinkState();
+    blinkReadyRef.current = false;
+    setBlinkStatus("Start the camera to learn your open-eye baseline.");
+    window.dispatchEvent(new CustomEvent("irisvocal:tracking-status", { detail: { status: "idle" } }));
   }
 
-  function startCalibration() {
+  async function startCalibration() {
     if (status !== "running" || !faceDetected) return;
+
+    calibrationWorkflowActiveRef.current = true;
+    gazeMarkerEnabledRef.current = false;
+    setGazeMarkerEnabled(false);
+    setMappedGaze(null);
+    smoothedMarkerRef.current = null;
+    dwellTargetRef.current = null;
+    gazeMappingRef.current = null;
+    setCalibrationState("idle");
+    window.dispatchEvent(new CustomEvent("irisvocal:reset-gaze-selection"));
+
+    const phraseGrid = document.querySelector(".phrase-grid");
+    if (!phraseGrid) {
+      calibrationWorkflowActiveRef.current = false;
+      setStatusMessage("Could not find the communication board. Keep the phrase grid mounted, then try again.");
+      return;
+    }
+
+    setStatusMessage("Bringing the communication board into view for board-specific calibration…");
+    phraseGrid.scrollIntoView({ behavior: "auto", block: "center", inline: "nearest" });
+    // Wait for scrolling/layout to settle before reading actual button coordinates.
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    if (!mountedRef.current) return;
+
+    const calibration = createBoardCalibrationTargets();
+    if (!calibration.targets || !calibration.bounds) {
+      calibrationWorkflowActiveRef.current = false;
+      setStatusMessage(calibration.error || "Could not determine the phrase-board calibration area.");
+      return;
+    }
+
     calibrationIndexRef.current = 0;
     currentTargetSamplesRef.current = [];
     calibrationPointsRef.current = [];
+    calibrationTargetsRef.current = calibration.targets;
+    calibrationBoundsRef.current = calibration.bounds;
+    gazeMappingRef.current = null;
     calibrationActiveRef.current = false;
     setCalibrationIndex(0);
     setCalibrationPoints([]);
+    setCalibrationTargets(calibration.targets);
     setCalibrationSampleCount(0);
     gazeMarkerEnabledRef.current = false;
     setGazeMarkerEnabled(false);
     setMappedGaze(null);
     smoothedMarkerRef.current = null;
+    dwellTargetRef.current = null;
     setCalibrationState("waiting");
-    setStatusMessage("Move your eyes to the target. Start capturing only when you are ready.");
+    setStatusMessage("Look at each target positioned over your communication board. Keep your head as still as comfortable.");
   }
-
   function beginTargetCapture() {
     if (status !== "running" || !faceDetected) return;
     currentTargetSamplesRef.current = [];
@@ -301,13 +556,13 @@ export default function GazeTracker() {
 
   function moveToNextTarget() {
     const nextIndex = calibrationIndexRef.current + 1;
-    if (nextIndex >= CALIBRATION_TARGETS.length) return;
+    if (nextIndex >= calibrationTargetsRef.current.length) return;
     calibrationIndexRef.current = nextIndex;
     currentTargetSamplesRef.current = [];
     setCalibrationSampleCount(0);
     setCalibrationIndex(nextIndex);
     setCalibrationState("waiting");
-    setStatusMessage(`Move your eyes to ${CALIBRATION_TARGETS[nextIndex].label.toLowerCase()}, then start capture when ready.`);
+    setStatusMessage(`Move your eyes to ${calibrationTargetsRef.current[nextIndex].label.toLowerCase()}, then start capture when ready.`);
   }
 
   function cancelCalibration() {
@@ -384,8 +639,12 @@ export default function GazeTracker() {
       }
 
       landmarkerRef.current = landmarker;
+      blinkStateRef.current = makeInitialBlinkState();
+      blinkReadyRef.current = false;
+      setBlinkStatus("Keep both eyes comfortably open for a moment to initialize blink detection.");
       setStatus("running");
       setStatusMessage("Camera active — looking for a face…");
+      window.dispatchEvent(new CustomEvent("irisvocal:tracking-status", { detail: { status: "running" } }));
 
       const detectFrame = () => {
         if (!mountedRef.current || !videoRef.current || !landmarkerRef.current) return;
@@ -404,6 +663,29 @@ export default function GazeTracker() {
             const landmarks = result.faceLandmarks?.[0];
 
             if (landmarks?.length) {
+              const blinkDurationMs = detectIntentionalBlink(
+                landmarks,
+                blinkStateRef.current,
+                performance.now()
+              );
+              const blinkReady = blinkStateRef.current.baselines.every(
+                (baseline) => Number.isFinite(baseline) && baseline > 0.09
+              );
+              if (blinkReady !== blinkReadyRef.current) {
+                blinkReadyRef.current = blinkReady;
+                setBlinkStatus(
+                  blinkReady
+                    ? "Ready: hold both eyes closed for a deliberate long blink, reopen, then blink again to confirm SOS."
+                    : "Learning open-eye baseline… keep both eyes comfortably open."
+                );
+              }
+              if (blinkDurationMs != null && !calibrationWorkflowActiveRef.current) {
+                setBlinkStatus("Long blink detected. Blink deliberately again within 8 seconds to confirm SOS.");
+                window.dispatchEvent(new CustomEvent("irisvocal:sos-blink", {
+                  detail: { durationMs: blinkDurationMs }
+                }));
+              }
+
               const perEye = EYES.map((eye) => getEyeRatios(landmarks, eye));
               const position = estimateEyePosition(landmarks);
               setEyeDiagnostics(perEye);
@@ -413,7 +695,7 @@ export default function GazeTracker() {
               setEyeDirection(classifyPosition(position));
 
               if (gazeMarkerEnabledRef.current && position) {
-                const rawMapped = mapGazeToScreen(position, calibrationPointsRef.current);
+                const rawMapped = mapGazeToScreen(position, gazeMappingRef.current, calibrationBoundsRef.current);
                 if (rawMapped) {
                   const previous = smoothedMarkerRef.current;
                   if (!previous) {
@@ -422,25 +704,29 @@ export default function GazeTracker() {
                     // Horizontal measurements are stronger, so keep them more responsive.
                     // Vertical measurements are noisier, so smooth them, but not so heavily that movement feels stuck.
                     const horizontalAlpha = 0.30;
-                    const verticalAlpha = 0.18;
+                    const verticalAlpha = 0.28;
                     const horizontalDelta = rawMapped.x - previous.x;
                     const verticalDelta = rawMapped.y - previous.y;
-                    const nextX = Math.abs(horizontalDelta) < 0.004
-                      ? previous.x
+                    // Snap after scrolling or a large gaze jump; otherwise smooth small noise.
+                    const snapToRaw = Math.abs(horizontalDelta) > 0.12 || Math.abs(verticalDelta) > 0.12;
+                    const nextX = snapToRaw || Math.abs(horizontalDelta) < 0.004
+                      ? rawMapped.x
                       : previous.x + horizontalAlpha * horizontalDelta;
-                    const nextY = Math.abs(verticalDelta) < 0.006
-                      ? previous.y
+                    const nextY = snapToRaw || Math.abs(verticalDelta) < 0.004
+                      ? rawMapped.y
                       : previous.y + verticalAlpha * verticalDelta;
-                    smoothedMarkerRef.current = { x: nextX, y: nextY };
+                    smoothedMarkerRef.current = { x: nextX, y: nextY, insideBoard: rawMapped.insideBoard };
                   }
                   setMappedGaze(smoothedMarkerRef.current);
 
-                  // Experimental dwell selection: hit-test the calibrated gaze point against phrase tiles.
+                  // Only select while the predicted gaze point remains in the captured phrase-button area.
                   const gazePoint = smoothedMarkerRef.current;
-                  const hit = document.elementFromPoint(
-                    gazePoint.x * window.innerWidth,
-                    gazePoint.y * window.innerHeight
-                  );
+                  const hit = gazePoint.insideBoard
+                    ? document.elementFromPoint(
+                        gazePoint.x * window.innerWidth,
+                        gazePoint.y * window.innerHeight
+                      )
+                    : null;
                   const tile = hit?.closest?.("[data-gaze-phrase-id]");
                   const now = performance.now();
 
@@ -492,12 +778,12 @@ export default function GazeTracker() {
 
                 if (currentTargetSamplesRef.current.length >= SAMPLES_PER_TARGET) {
                   const targetIndex = calibrationIndexRef.current;
-                  const target = CALIBRATION_TARGETS[targetIndex];
+                  const target = calibrationTargetsRef.current[targetIndex];
                   const average = averageSamples(currentTargetSamplesRef.current);
                   const point = {
                     target: target.label,
-                    targetX: target.x,
-                    targetY: target.y,
+                    targetX: target.targetX,
+                    targetY: target.targetY,
                     irisX: Number(average.x.toFixed(4)),
                     irisY: Number(average.y.toFixed(4)),
                     verticalSignal: Number(average.verticalSignal.toFixed(5)),
@@ -511,11 +797,20 @@ export default function GazeTracker() {
                   setCalibrationSampleCount(SAMPLES_PER_TARGET);
                   calibrationActiveRef.current = false;
 
-                  if (targetIndex + 1 >= CALIBRATION_TARGETS.length) {
-                    setCalibrationState("complete");
-                    setStatusMessage(
-                      "All five targets captured. Review the measurements before implementing gaze selection."
-                    );
+                  if (targetIndex + 1 >= calibrationTargetsRef.current.length) {
+                    calibrationWorkflowActiveRef.current = false;
+                    const fittedMapping = fitGazeMapping(nextPoints);
+                    if (!fittedMapping || !calibrationBoundsRef.current) {
+                      gazeMappingRef.current = null;
+                      setCalibrationState("idle");
+                      setStatusMessage("These samples did not produce a stable mapping. Keep your head steady and run calibration again.");
+                    } else {
+                      gazeMappingRef.current = fittedMapping;
+                      setCalibrationState("complete");
+                      setStatusMessage(
+                        "All 16 board targets captured. Enable gaze selection and test the marker on multiple tiles before relying on it."
+                      );
+                    }
                   } else {
                     setCalibrationState("target-complete");
                     setStatusMessage(
@@ -549,6 +844,7 @@ export default function GazeTracker() {
             console.error("Face landmark detection failed:", error);
             calibrationActiveRef.current = false;
             setStatus("error");
+            window.dispatchEvent(new CustomEvent("irisvocal:tracking-status", { detail: { status: "error" } }));
             setStatusMessage("Face detection stopped. Check the browser console.");
             return;
           }
@@ -565,6 +861,7 @@ export default function GazeTracker() {
       landmarkerRef.current?.close();
       landmarkerRef.current = null;
       setStatus("error");
+      window.dispatchEvent(new CustomEvent("irisvocal:tracking-status", { detail: { status: "error" } }));
       setStatusMessage(
         error?.name === "NotAllowedError"
           ? "Camera permission was denied. Allow camera access in your browser settings, then try again."
@@ -575,7 +872,7 @@ export default function GazeTracker() {
 
   const activeTarget =
     ["waiting", "collecting", "target-complete"].includes(calibrationState)
-      ? CALIBRATION_TARGETS[Math.min(calibrationIndex, CALIBRATION_TARGETS.length - 1)]
+      ? calibrationTargets[Math.min(calibrationIndex, calibrationTargets.length - 1)]
       : null;
 
   return (
@@ -602,10 +899,10 @@ export default function GazeTracker() {
       {activeTarget && (
         <div className="gaze-calibration-overlay" role="status" aria-live="polite">
           <div className="gaze-calibration-instructions">
-            <strong>Calibration · Target {calibrationIndex + 1} of {CALIBRATION_TARGETS.length}: {activeTarget.label}</strong>
+            <strong>Calibration · Target {calibrationIndex + 1} of {calibrationTargets.length}: {activeTarget.label}</strong>
             {calibrationState === "waiting" && (
               <>
-                <span>Take your time moving your eyes to the dot. It will stay here until you choose to capture.</span>
+                <span>Look at the dot inside “{activeTarget.phraseText}”. It will stay here until you capture this target.</span>
                 <button type="button" onClick={beginTargetCapture} disabled={!faceDetected}>
                   Capture this target
                 </button>
@@ -613,7 +910,7 @@ export default function GazeTracker() {
             )}
             {calibrationState === "collecting" && (
               <>
-                <span>Keep looking at the dot while the app captures its samples.</span>
+                <span>Keep looking at the dot inside “{activeTarget.phraseText}” while samples are captured.</span>
                 <span>Samples: {calibrationSampleCount} / {SAMPLES_PER_TARGET}</span>
               </>
             )}
@@ -638,8 +935,8 @@ export default function GazeTracker() {
           <p className="gaze-tracker-kicker">MEMBER 1 · STAGE 3</p>
           <h2 id="gaze-tracker-title">Eye-position calibration</h2>
           <p className="gaze-tracker-description">
-            Calibration records iris ratios while you look at five screen targets. Vertical position is measured relative to the eye-corner line.
-            After calibration, enable experimental tile selection. Hold your gaze on a tile for 1.5 seconds to select and speak it. Accuracy is not guaranteed.
+            Calibration places four targets inside each of the four visible phrase buttons (16 total) and fits both gaze signals together. Set Category to All and recalibrate after changing zoom or window size.
+            After calibration, enable experimental tile selection. A deliberate long blink can open the SOS confirmation prompt; a second deliberate long blink confirms it. SOS blink gestures work only while this camera is running and are experimental.
           </p>
         </div>
         <span className={`gaze-status-pill gaze-status-${status}`}>
@@ -678,6 +975,8 @@ export default function GazeTracker() {
             {statusMessage}
           </p>
           <div className="gaze-metric"><span>Face detected</span><strong>{faceDetected ? "Yes" : "No"}</strong></div>
+          <div className="gaze-metric"><span>SOS blink detection</span><strong>{blinkReadyRef.current ? "Ready" : status === "running" ? "Learning" : "Camera off"}</strong></div>
+          <p className="gaze-status-message" aria-live="polite">{blinkStatus}</p>
           <div className="gaze-metric"><span>Landmarks in current frame</span><strong>{landmarkCount || "—"}</strong></div>
           <div className="gaze-metric"><span>Estimated eye position</span><strong>{eyeDirection}</strong></div>
           <div className="gaze-metric"><span>Horizontal iris ratio</span><strong>{eyePosition ? eyePosition.x.toFixed(2) : "—"}</strong></div>
@@ -724,7 +1023,7 @@ export default function GazeTracker() {
               onClick={startCalibration}
               disabled={status !== "running" || !faceDetected || ["waiting", "collecting", "target-complete"].includes(calibrationState)}
             >
-              {["waiting", "collecting", "target-complete"].includes(calibrationState) ? "Calibration in progress…" : "Start 5-point calibration"}
+              {["waiting", "collecting", "target-complete"].includes(calibrationState) ? "Calibration in progress…" : "Start 16-point board calibration"}
             </button>
             {calibrationState === "running" && (
               <button type="button" className="gaze-stop-button" onClick={cancelCalibration}>
@@ -750,8 +1049,8 @@ export default function GazeTracker() {
 
           {calibrationState === "complete" && (
             <div className="gaze-calibration-results" role="status">
-              <strong>Five target samples captured</strong>
-              <p>These samples create an experimental screen mapping, not a validated gaze model. Test the marker before relying on tile selection.</p>
+              <strong>Sixteen board targets captured</strong>
+              <p>These samples create an experimental 2D quadratic mapping from both gaze signals, trained on four positions inside each visible phrase button. This is not a validated gaze model; test the marker on several phrase tiles before relying on selection.</p>
               <div className="gaze-calibration-table-wrap">
                 <table className="gaze-calibration-table">
                   <thead><tr><th>Target</th><th>Iris X</th><th>Vertical signal</th><th>Samples</th></tr></thead>

@@ -131,7 +131,7 @@
   position: fixed;
   z-index: 9999;
   inset: 0;
-  background: rgba(22, 24, 35, 0.94);
+  background: rgba(22, 24, 35, 0.58);
   color: white;
 }
 .gaze-calibration-instructions {
@@ -196,56 +196,14 @@
 }
 
 
-/* Live per-eye vertical diagnostic */
-.gaze-eye-diagnostics {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 12px;
-  background: #f7f5fa;
-  border: 1px solid #e5ddec;
-  border-radius: 9px;
-  min-width: 0;
-}
-.gaze-eye-diagnostics > strong {
-  color: #075e53;
-  font-size: 13px;
-}
-.gaze-eye-diagnostics > p {
-  margin: 0;
-  color: #6c6c80;
-  font-size: 11px;
-  line-height: 1.45;
-}
-.gaze-eye-diagnostics .gaze-calibration-table-wrap {
-  overflow-x: auto;
-}
-.gaze-eye-diagnostics .gaze-calibration-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 11px;
-}
-.gaze-eye-diagnostics .gaze-calibration-table th,
-.gaze-eye-diagnostics .gaze-calibration-table td {
-  padding: 7px 6px;
-  border-bottom: 1px solid #e4ddea;
-  text-align: right;
-  white-space: nowrap;
-}
-.gaze-eye-diagnostics .gaze-calibration-table th:first-child,
-.gaze-eye-diagnostics .gaze-calibration-table td:first-child {
-  text-align: left;
-}
-
-
-/* Approximate viewport gaze marker. It never captures clicks or selects phrases. */
+/* Board-calibrated webcam gaze marker and feedback */
 .gaze-live-marker {
   position: fixed;
   z-index: 10000;
   width: 24px;
   height: 24px;
   transform: translate(-50%, -50%);
-  border: 3px solid #ffffff;
+  border: 3px solid #fff;
   border-radius: 50%;
   background: #e04f5f;
   box-shadow: 0 0 0 7px rgba(224, 79, 95, 0.22), 0 0 20px rgba(224, 79, 95, 0.65);
@@ -270,40 +228,47 @@
   font-size: 12px;
   pointer-events: none;
 }
-
-
-/* Smooth marker motion visually; JS also applies stronger filtering on vertical movement. */
-.gaze-live-marker {
-  transition: left 70ms linear, top 110ms ease-out;
-  will-change: left, top;
+.gaze-eye-diagnostics {
+  padding: 12px;
+  background: #fbfafd;
+  border: 1px solid #e8e2ef;
+  border-radius: 9px;
 }
-
-/* Append these styles to your existing GazeTracker.css */
+.gaze-eye-diagnostics > strong {
+  display: block;
+  margin-bottom: 6px;
+  color: #302c3d;
+  font-size: 12px;
+}
+.gaze-eye-diagnostics > p {
+  margin: 0 0 10px;
+  color: #6c6c80;
+  font-size: 11px;
+  line-height: 1.5;
+}
 .gaze-dwell-status {
-  margin-top: 12px;
-  padding: 12px 14px;
-  border: 1px solid #b9e8dc;
-  border-radius: 12px;
-  background: #f2fbf8;
+  padding: 11px 12px;
+  color: #075e53;
+  background: #f0faf7;
+  border: 1px solid #c9e9e0;
+  border-radius: 8px;
 }
-
 .gaze-dwell-status-text {
   margin-bottom: 8px;
-  color: #075e55;
-  font-weight: 600;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.45;
 }
-
 .gaze-dwell-progress {
-  height: 8px;
+  height: 7px;
   overflow: hidden;
-  border-radius: 999px;
-  background: #dcece8;
+  background: #dcece7;
+  border-radius: 99px;
 }
-
 .gaze-dwell-progress span {
   display: block;
   height: 100%;
+  background: #087f70;
   border-radius: inherit;
-  background: #078675;
-  transition: width 80ms linear;
+  transition: width 100ms linear;
 }

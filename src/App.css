@@ -624,3 +624,70 @@ body {
   max-height: none;
   overflow: visible;
 }
+
+
+/* Keep the tracker mounted off-screen outside caregiver mode so its camera stream
+   can continue after the caregiver starts it. The camera never starts without permission. */
+.utility-rail--background {
+  position: fixed !important;
+  left: -10000px !important;
+  top: 0 !important;
+  width: 1px !important;
+  max-width: 1px !important;
+  height: 1px !important;
+  max-height: 1px !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+.sos-confirmation-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(24, 25, 36, 0.76);
+}
+.sos-confirmation-dialog {
+  width: min(480px, 100%);
+  padding: 26px;
+  color: #302c3d;
+  background: #fff;
+  border: 2px solid #e6c6cb;
+  border-radius: 18px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.28);
+  text-align: center;
+}
+.sos-confirmation-emblem {
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  margin: 0 auto 12px;
+  color: #fff;
+  background: #c93643;
+  border-radius: 50%;
+  font-size: 18px;
+  font-weight: 900;
+  letter-spacing: 0.5px;
+}
+.sos-confirmation-dialog h2 { margin: 0 0 10px; font-size: 23px; line-height: 1.25; }
+.sos-confirmation-dialog p { margin: 0 0 12px; color: #5f5a6c; font-size: 14px; line-height: 1.6; }
+.sos-confirmation-dialog .sos-confirmation-note { color: #7b3040; font-size: 12px; }
+.sos-confirmation-actions { display: flex; justify-content: center; gap: 12px; margin-top: 18px; }
+.sos-confirmation-actions button { min-height: 46px; padding: 0 18px; border-radius: 9px; font-size: 14px; font-weight: 800; cursor: pointer; }
+.sos-cancel-button { color: #4e485e; background: #f2eef7; border: 1px solid #d7cfe2; }
+.sos-confirm-button { color: #fff; background: #c93643; border: 1px solid #b72c39; }
+.sos-confirm-button:hover { background: #a92331; }
+.sos-confirmation-dialog .sos-confirmation-footnote { margin: 16px 0 0; color: #777084; font-size: 11px; }
+@media (max-width: 480px) {
+  .sos-confirmation-dialog { padding: 20px 16px; }
+  .sos-confirmation-dialog h2 { font-size: 20px; }
+  .sos-confirmation-actions { flex-direction: column-reverse; }
+  .sos-confirmation-actions button { width: 100%; }
+}
