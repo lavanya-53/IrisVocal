@@ -16,9 +16,12 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 public class EmergencyRequest {
 
+ feature/backend-integration
+
     @NotBlank(message = "Recipient email is required")
     @Email(message = "Please provide a valid recipient email")
     private String recipientEmail;
+
 
     @NotBlank(message = "Emergency message cannot be empty")
     private String message;

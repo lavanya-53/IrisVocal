@@ -32,5 +32,7 @@ public class User {
     private String emergencyContactName;
 
     private String emergencyContactNumber;
+    @Column(name = "emergency_contact_email")
+    private String emergencyContactEmail;
 }
 

@@ -33,7 +33,10 @@ public class EmergencyService {
         User user = userService.findUserByEmail(email);
 
         // Read the recipient address supplied by the frontend.
+ 
+       String recipientEmail=user.getEmergencyContactEmail();
         String recipientEmail = request.getRecipientEmail();
+
 
         double latitude = request.getLatitude();
         double longitude = request.getLongitude();
