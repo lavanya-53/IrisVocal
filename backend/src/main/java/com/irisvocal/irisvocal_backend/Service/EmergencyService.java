@@ -29,18 +29,21 @@ public class EmergencyService {
             EmergencyRequest request,
             String email) {
 
-        // Find the logged-in user.
+        // Find the authenticated user.
         User user = userService.findUserByEmail(email);
+
+        // Read the recipient address supplied by the frontend.
+       String recipientEmail=user.getEmergencyContactEmail();
 
         double latitude = request.getLatitude();
         double longitude = request.getLongitude();
 
-        // Build the Google Maps location link.
+        // Create the Google Maps location link.
         String locationUrl =
                 "https://maps.google.com/?q="
                         + latitude + "," + longitude;
 
-        // Prepare the emergency email.
+        // Prepare the email body.
         String emailBody =
                 "IRISVOCAL EMERGENCY ALERT\n\n"
                         + "User: " + user.getName() + "\n"
@@ -49,7 +52,9 @@ public class EmergencyService {
                         + "Please contact the user as soon as possible.";
 
         try {
+            // Send the email to the frontend-supplied recipient.
             sendGridEmailService.sendEmail(
+                    recipientEmail,
                     "IrisVocal Emergency Alert",
                     emailBody
             );
@@ -63,9 +68,9 @@ public class EmergencyService {
 
         } catch (RestClientResponseException ex) {
 
-            // SendGrid returned an HTTP error.
             System.err.println(
-                    "SendGrid HTTP error: " + ex.getStatusCode()
+                    "SendGrid returned HTTP status: "
+                            + ex.getStatusCode()
             );
 
             throw new ResponseStatusException(
@@ -75,7 +80,6 @@ public class EmergencyService {
 
         } catch (Exception ex) {
 
-            // Handle configuration and other unexpected errors.
             System.err.println(
                     "Emergency email error: "
                             + ex.getClass().getSimpleName()

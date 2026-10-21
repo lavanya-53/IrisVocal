@@ -36,6 +36,7 @@ public class UserService {
                 )
                 .emergencyContactName(request.getEmergencyContactName())
                 .emergencyContactNumber(request.getEmergencyContactNumber())
+                .emergencyContactEmail(request.getEmergencyContactEmail())
                 .build();
 
         userRepository.save(user);
