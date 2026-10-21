@@ -20,18 +20,18 @@ public class SendGridEmailService {
     @Value("${sendgrid.from-email}")
     private String fromEmail;
 
-    @Value("${sendgrid.to-email}")
-    private String toEmail;
-
     public SendGridEmailService() {
         this.restClient = RestClient.create();
     }
 
-    public void sendEmail(String subject, String emailBody) {
+    public void sendEmail(
+            String toEmail,
+            String subject,
+            String emailBody) {
 
         if (toEmail == null || toEmail.isBlank()) {
-            throw new IllegalStateException(
-                    "Test recipient email is not configured."
+            throw new IllegalArgumentException(
+                    "Recipient email is required."
             );
         }
 
