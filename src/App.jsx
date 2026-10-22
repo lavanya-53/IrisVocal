@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import GazeTracker from "./GazeTracker";
 import "./App.css";
+import Auth from "./Auth";
 
 const initialPhrases = [
   { id: 1, text: "I need help", category: "General", icon: "✚" },
@@ -22,6 +23,7 @@ const categories = ["All", "General", "Health", "Social", "Safety"];
 
 function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [loggedInEmail, setLoggedInEmail] = useState("");
 
   const [phrases, setPhrases] = useState(() => {
     try {
@@ -64,8 +66,9 @@ const [showEditForm, setShowEditForm] = useState(false);
   const [editCategory, setEditCategory] = useState("General");
 
   // Keep mock mode enabled until Member 3 confirms the backend is ready.
-  const USE_MOCK_EMERGENCY_API = true;
+  const USE_MOCK_EMERGENCY_API = false;
   const EMERGENCY_API_URL = "http://localhost:8081/api/emergency";
+  const [emergencyEmail, setEmergencyEmail] = useState("");
   const EMERGENCY_COOLDOWN_MS = 15000;
 
   const emergencyInProgressRef = useRef(false);
@@ -288,10 +291,12 @@ const [showEditForm, setShowEditForm] = useState(false);
 
     try {
       const { latitude, longitude } = await getCurrentLocation();
+      console.log("Emergency recipient loaded:", emergencyEmail);
       const requestBody = {
         message: "I need emergency assistance",
         latitude,
         longitude,
+        emergencyEmail: emergencyEmail.trim(),
       };
       const locationUrl = `https://maps.google.com/?q=${latitude},${longitude}`;
 
@@ -312,28 +317,30 @@ const [showEditForm, setShowEditForm] = useState(false);
           locationUrl,
         };
       } else {
-        const response = await fetch(EMERGENCY_API_URL, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(requestBody),
-        });
+        
+const response = await fetch(EMERGENCY_API_URL, {
+  method: "POST",
+  credentials: "include",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify(requestBody),
+});
 
-        let parsedResponse = null;
-        try {
-          parsedResponse = await response.json();
-        } catch {
-          parsedResponse = null;
-        }
+let parsedResponse;
+try {
+  parsedResponse = await response.json();
+} catch {
+  parsedResponse = {};
+}
 
-        if (!response.ok) {
-          throw new Error(
-            parsedResponse?.message ||
-              `The emergency service returned HTTP ${response.status}.`
-          );
-        }
+if (!response.ok) {
+  throw new Error(
+    parsedResponse.message ||
+      `Emergency request failed (${response.status})`
+  );
+}
 
-        responseData = parsedResponse;
-      }
+responseData = parsedResponse;
+}
 
       lastEmergencyRequestAtRef.current = Date.now();
       setEmergencyStatus({
@@ -411,13 +418,22 @@ const [showEditForm, setShowEditForm] = useState(false);
     };
   }, []);
 
-  if (!isLoggedIn) {
+  
+if (!isLoggedIn) {
   return (
-    <button onClick={() => setIsLoggedIn(true)}>
-      Open communication board (development)
-    </button>
+    <Auth
+      onLoginSuccess={({ email, data }) => {
+        setLoggedInEmail(email);
+        
+        setEmergencyEmail(
+          data?.user?.emergencyContactEmail || ""
+        );
+        setIsLoggedIn(true);
+      }}
+  />
   );
 }
+
   return (
     <main className="console">
       <header className="topbar">
@@ -763,6 +779,8 @@ const [showEditForm, setShowEditForm] = useState(false);
             <p className="sos-confirmation-note">
               Quick blinks are ignored. If this prompt appeared by mistake, cancel it. You can also use Confirm SOS below.
             </p>
+            
+
             <div className="sos-confirmation-actions">
               <button type="button" className="sos-cancel-button" onClick={cancelSosConfirmation}>
                 Cancel

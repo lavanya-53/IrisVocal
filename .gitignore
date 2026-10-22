@@ -27,3 +27,9 @@ dist-ssr
 .env
 .env.*
 !.env.example
+
+# Java / Maven build output
+backend/target/
+
+# Local application configuration and secrets
+backend/src/main/resources/application.properties

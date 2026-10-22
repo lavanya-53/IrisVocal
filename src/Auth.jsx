@@ -30,6 +30,7 @@ export default function Auth({ onLoginSuccess }) {
     password: "",
     emergencyContactName: "",
     emergencyContactNumber: "",
+    emergencyContactEmail: "",
   });
 
   function updateLogin(event) {
@@ -59,11 +60,13 @@ export default function Auth({ onLoginSuccess }) {
       password: registerForm.password,
       emergencyContactName: registerForm.emergencyContactName.trim(),
       emergencyContactNumber: registerForm.emergencyContactNumber.trim(),
+      emergencyContactEmail: registerForm.emergencyContactEmail.trim(),
     };
 
     try {
       const response = await fetch(`${API_BASE_URL}/api/auth/register`, {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json", Accept: "application/json" },
         body: JSON.stringify(payload),
       });
@@ -84,6 +87,7 @@ export default function Auth({ onLoginSuccess }) {
         password: "",
         emergencyContactName: "",
         emergencyContactNumber: "",
+        emergencyContactEmail: "",
       });
       setMode("login");
     } catch (error) {
@@ -114,6 +118,7 @@ export default function Auth({ onLoginSuccess }) {
     try {
       const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json", Accept: "application/json" },
         body: JSON.stringify(payload),
       });
@@ -222,6 +227,19 @@ export default function Auth({ onLoginSuccess }) {
                 <label htmlFor="emergency-contact-number">Contact number</label>
                 <input id="emergency-contact-number" name="emergencyContactNumber" type="tel" autoComplete="tel" placeholder="+919876543210" value={registerForm.emergencyContactNumber} onChange={updateRegister} pattern="[+]?[0-9 ()-]{7,20}" title="Enter a valid phone number, including country code if possible." required />
               </div>
+              <div className="iris-auth-field full">
+  <label htmlFor="emergency-contact-email">Contact email</label>
+  <input
+    id="emergency-contact-email"
+    name="emergencyContactEmail"
+    type="email"
+    autoComplete="email"
+    placeholder="trustedcontact@example.com"
+    value={registerForm.emergencyContactEmail}
+    onChange={updateRegister}
+    required
+  />
+</div>
             </div>
 
             <button className="iris-auth-submit" type="submit" disabled={loading}>{loading ? "Creating account…" : "Create account"}</button>

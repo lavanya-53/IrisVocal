@@ -661,6 +661,7 @@ export default function GazeTracker() {
           try {
             const result = currentLandmarker.detectForVideo(currentVideo, performance.now());
             const landmarks = result.faceLandmarks?.[0];
+            
 
             if (landmarks?.length) {
               const blinkDurationMs = detectIntentionalBlink(

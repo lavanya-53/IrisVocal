@@ -113,12 +113,12 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   border: 1px solid #e4dcec; border-radius: 13px; box-shadow: 0 4px 12px rgba(65,48,85,.05);
   transition: border-color .18s ease, box-shadow .18s ease, transform .18s ease;
 }
-.phrase-card:nth-child(6n + 1) { background: linear-gradient(145deg, #fff, #dff5ee); }
-.phrase-card:nth-child(6n + 2) { background: linear-gradient(145deg, #fff, #e3edff); }
-.phrase-card:nth-child(6n + 3) { background: linear-gradient(145deg, #fff, #fce9dc); }
-.phrase-card:nth-child(6n + 4) { background: linear-gradient(145deg, #fff, #f0e5ff); }
-.phrase-card:nth-child(6n + 5) { background: linear-gradient(145deg, #fff, #fff2cc); }
-.phrase-card:nth-child(6n + 6) { background: linear-gradient(145deg, #fff, #fce5ed); }
+.phrase-card:nth-child(6n + 1) { background: linear-gradient(145deg, #fff, #a9edd8); }
+.phrase-card:nth-child(6n + 2) { background: linear-gradient(145deg, #fff, #c3d6f9); }
+.phrase-card:nth-child(6n + 3) { background: linear-gradient(145deg, #fff, #ecc7af); }
+.phrase-card:nth-child(6n + 4) { background: linear-gradient(145deg, #fff, #dcccf3); }
+.phrase-card:nth-child(6n + 5) { background: linear-gradient(145deg, #fff, #eee0b6); }
+.phrase-card:nth-child(6n + 6) { background: linear-gradient(145deg, #fff, #f2d0dc); }
 .phrase-card:hover { border-color: #a5cfc5; box-shadow: 0 7px 18px rgba(65,48,85,.1); transform: translateY(-2px); }
 .phrase-card.selected { border: 2px solid var(--teal); box-shadow: 0 0 0 3px rgba(8,127,112,.15); }
 .phrase-select {
